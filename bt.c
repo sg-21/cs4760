@@ -1,488 +1,406 @@
+#include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
 #include <unistd.h>
-#include <errno.h>
+#include <stdlib.h>
+#include <getopt.h>
 #include <string.h>
-#include <time.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <dirent.h>
-#include <grp.h>
-#include <pwd.h>
+#include <errno.h>
 
+int hflag=0;
+int Lflag=0;
+int tflag=0;
+int pflag=0;
+int iflag=0;
+int uflag=0;
+int gflag=0;
+int sflag=0;
+int dflag=0;
 
-void format(int *returnsize, char *dir, int level, int indentation, bool symlink);
-char * datechange(char *str, size_t size, time_t val);
+int opt;
+char command[100];
 
-void breadthfirst(char *dir, int level, int width, int indentation, bool symlink, char *options);
-void enqueue (struct queue q*, char *dir);
+static char error[100];
+static char usage[100];
 
-//------------------------------------------
-
-int main(int argc, char *argv[])
+ /*queue struct*/
+struct Queue                       
 {
-	//Optional Variables
-	int indent = 4;
-	bool follow_symlink = false;
-	char option_string[10];
+    int front, rear, size;
+    unsigned capacity;
+    char** array;
+};
 
-	//Options
-	int opt;
-
-	while((opt = getopt(argc, argv, "h:Ldgipstul")) != -1)
-	{
-		switch(opt)
-		{
-			case 'h':
-				printf("NAME:\n");
-				printf("	%s - traverse directory in breadthfirst order.\n", argv[0]);
-				printf("\nUSAGE:\n");
-				printf("	%s bt [-h] [-L -d -g -i -p -s -t -u | -l] [dirname].\n", argv[0]);
-				printf("\nDESCRIPTION:\n");
-				printf("	-h	: Print a help message and exit.\n");
-				printf("	-L	: Follow symbolic links, if any. Default will be to not follow symbolic links.\n");
-				printf("	-d	: Show the time of last modification.\n");
-				printf("	-g	: Print the GID associated with the file.\n");
-				printf("	-i	: Print the number of links to file in inode table.\n");
-				printf("	-p	: Print permission bits as rwxrwxrwx.\n");
-				printf("	-s	: Print the size of file in bytes...\n");
-				printf("	-t	: Print information on file type.\n");
-				printf("	-u	: Print the UID associated with the file.\n");
-				printf("	-l	: Print information on the file as if the options \"tpiugs\" are all specified.\n\n");
-				return EXIT_SUCCESS;
-
-			case 'L':
-				follow_symlink = true;
-				break;
-
-			case 'd':
-				strcat(option_string, "d");
-				break;
-
-			case 'g':
-				strcat(option_string, "g");
-				break;
-
-			case 'i':
-				strcat(option_string, "i");
-				break;
-
-			case 'p':
-				strcat(option_string, "p");
-				break;
-
-			case 's':
-				strcat(option_string, "s");
-				break;
-
-			case 't':
-				strcat(option_string, "t");
-				break;
-
-			case 'u':
-				strcat(option_string, "u");
-				break;
-
-			case 'l':
-				strcat(option_string, "tpiugs");
-				break;
-
-			default:
-				fprintf(stderr, "%s: Please use \"-h\" option for more info.\n", argv[0]);
-				return EXIT_FAILURE;
-		}
-	}
-
-	//default to current working directory.
-	char *topdir, *targetdir, current[2]=".";
-    	if(argv[optind] == NULL)
-	{
-		char origin[4096];
-        	getcwd(origin, sizeof(origin));
-        	topdir = origin;
-		targetdir = current;
-    	}
-	else
-	{
-        	topdir=argv[optind];
-		targetdir = topdir;
-	}
-
-	//longest name in directory
-	int longest_name;
-	format(&longest_name, topdir, 0, indent, follow_symlink);
-
-	//Breadthfirst search traverse directories
-	breadthfirst(topdir, 0, longest_name, indent, follow_symlink, option_string);
-
-	return EXIT_SUCCESS;
-}
-
-//column formatting.
-void format(int *returnsize, char *dir, int level, int indentation, bool symlink)
+struct Queue* createQueue(unsigned capacity)        
 {
-	DIR *dp;		//A type representing a directory stream.
-	struct dirent *entry;	.
-	struct stat filestat;	
-
-	char *buf;
-	size_t size;
-	int max_length = 0;
-
-	//indentation space
-	int spaces = level * indentation;
-
-	//opendir able to open a directory stream 
-	if((dp = opendir(dir)) == NULL)
-	{
-		return;
-	}
-
-	//change the current working directory.
-	chdir(dir);
-
-	//path of the current directory
-	char cwd[4096];
-	getcwd(cwd, sizeof(cwd));
-
-	while((entry = readdir(dp)) != NULL)
-	{
-		//attributes of the file named by filename 
-		lstat(entry->d_name, &filestat);
-
-		//checks if directory
-		if(S_ISDIR(filestat.st_mode))
-		{
-			//ignore . and ..
-			if(strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0)
-			{
-				continue;
-			}
-
-			//find longest name in directory
-			size = snprintf(NULL, 0, "%*s%s/", spaces, "", entry->d_name);
-			buf = (char *)malloc(size + 1);
-			snprintf(buf, size + 1, "%*s%s/", spaces, "", entry->d_name);
-			max_length = strlen(buf);
-			free(buf);
-
-			//determine longest name
-			if(*returnsize < max_length)
-			{
-				*returnsize = max_length;
-			}
-
-			format(returnsize, entry->d_name, level + 1, indentation, symlink);
-		}
-		else if(S_ISLNK(filestat.st_mode))
-                {
-			//execute if follow symbolic link is true
-			if(symlink)
-			{
-				//found directory, ignore . and ..
-				if(strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0)
-				{
-					continue;
-				}
-
-				stat(entry->d_name, &filestat);
-
-				//find longest name in directory
-				size = snprintf(NULL, 0, "%*s%s/", spaces, "", entry->d_name);
-				buf = (char *)malloc(size + 1);
-				snprintf(buf, size + 1, "%*s%s/", spaces, "", entry->d_name);
-				max_length = strlen(buf);
-				free(buf);
-
-				//determine longest name
-				if(*returnsize < max_length)
-				{
-					*returnsize = max_length;
-				}
-
-				format(returnsize, entry->d_name, level + 1, indentation, symlink);
-
-				//previous path
-				chdir(cwd);
-			}
-                }
-		else
-		{
-			//find longest name in directory
-			size = snprintf(NULL, 0, "%*s%s", spaces, "", entry->d_name);
-                        buf = (char *)malloc(size + 1);
-                        snprintf(buf, size + 1, "%*s%s", spaces, "", entry->d_name);
-			max_length = strlen(buf);
-			free(buf);
-
-
-			//determine longest name
-			if(*returnsize < max_length)
-			{
-				*returnsize = max_length;
-			}
-		}
-	}
-
-	//current working directory
-	chdir("..");
-
-	//close directory 
-	closedir(dp);
+    struct Queue* queue = malloc(sizeof(struct Queue));
+    queue->capacity = capacity;
+    queue->front = queue->size = 0;
+    queue->rear = capacity - 1;
+    queue->array = malloc(queue->capacity * sizeof(char*));
+    return queue;
 }
 
-//formats the time represented in the structure 
-char * formatdate(char *str, size_t size, time_t val)
+int isFull(struct Queue* queue)
 {
-	strftime(str , size, "%b %d, %Y", localtime(&val));
-	return str;
+    return (queue->size == queue->capacity);
 }
 
-int isEmpty (struct queue *q){
-	return !(q->index);
-}
-
-//initialization of queue
-struct queue *initQueue(){
-	struct queue *q = (struct queue *)malloc(sizeof(struct queue));
-	q->index=0;
-	q->front = NULL;
-	q->rear = NULL; 
-	return q;
-}
-
-//add directory to queue
-void enqueue(struct queue *q, char *dir){
-	struct node *newNode = (struct node *)malloc(sizeof(struct node));
-	newNode->nextNode = NULL;
-
-	if(!isEmpty(q)){
-		q->rear->nextNode = newNode;
-		q->rear = newNode;
-	}
-	else{
-		q->front = q->rear =newNode;
-	}
-}
-
-//remove directory from queue
-struct node *dequeue (struct queue *q){
-	struct node *temp;
-	temp = q->front;
-	q->front = q->nextNode;
-	return temp;
-}
-
-//function of breadth first search traversal
-void breadthfirst(char *dir, int level, int width, int indentation, bool symlink, char *options)
+int isEmpty(struct Queue* queue)
 {
-	DIR *dp;		//A type representing a directory stream.
-	struct dirent *entry;	
-	struct stat filestat;	
-	struct group *grp;	
-	struct passwd *pwp;	
-
-	//indentation space 
-	int spaces = level * indentation;
-
-	//initialize queue
-	q = initQueue();
-	enqueue=(q, dir);
-	
-	//check if able open a directory 
-	if((dp = opendir(dir)) == NULL)
-	{
-		fprintf(stderr, "%*sERROR: %s\n", spaces, "", strerror(errno));
-		return;
-	}
-
-	//change current working directory
-	chdir(dir);
-
-	//current directory
-	char cwd[4096];
-	getcwd(cwd, sizeof(cwd));
-
-	while((entry = readdir(dp)) != NULL)
-	{
-		if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-		continue;
-	}
-
-		//file, directory, or link list.
-		if(S_ISDIR(filestat.st_mode))
-		{
-			strcat(permission_bit, "d");
-			enqueue(q, name);
-			printf(name);
-			display();
-		}
-		
-		else if(S_ISLNK(filestat.st_mode))
-		{
-			strcat(permission_bit, "l");
-			printf(name);
-			display();
-		}
-		else if(S_ISREG(filestat.st_mode))
-		{
-			strcat(permission_bit, "-");
-			printf(name);
-			display();
-		}
-
-		//read, write, execute
-		(filestat.st_mode & S_IRUSR) ? strcat(permission_bit, "r") : strcat(permission_bit, "-");
-		(filestat.st_mode & S_IWUSR) ? strcat(permission_bit, "w") : strcat(permission_bit, "-");
-		(filestat.st_mode & S_IXUSR) ? strcat(permission_bit, "x") : strcat(permission_bit, "-");
-
-		(filestat.st_mode & S_IRGRP) ? strcat(permission_bit, "r") : strcat(permission_bit, "-");
-		(filestat.st_mode & S_IWGRP) ? strcat(permission_bit, "w") : strcat(permission_bit, "-");
-		(filestat.st_mode & S_IXGRP) ? strcat(permission_bit, "x") : strcat(permission_bit, "-");
-
-		(filestat.st_mode & S_IROTH) ? strcat(permission_bit, "r") : strcat(permission_bit, "-");
-		(filestat.st_mode & S_IWOTH) ? strcat(permission_bit, "w") : strcat(permission_bit, "-");
-		(filestat.st_mode & S_IXOTH) ? strcat(permission_bit, "x") : strcat(permission_bit, "-");
-
-		//size of a directory/file 
-		long long int byte = (long long)filestat.st_size;
-		char *sizesuffix = " ";
-		if(byte >= 1000000000)
-		{
-			byte = (long long)(byte/1000000000);
-			sizesuffix = "G";
-		}
-		else if(byte >= 1000000)
-		{
-			byte = (long long)(byte/1000000);
-			sizesuffix = "M";
-		}
-		else if(byte >= 1000)
-		{
-			byte = (long long)(byte/1000);
-			sizesuffix = "K";
-		}
-
-		//determine file type.
-		char *filecategory = "";
-		if(S_ISDIR(filestat.st_mode))
-		{
-			filecategory = "directory";
-		}
-		else if(S_ISLNK(filestat.st_mode))
-		{
-			filecategory = "symlink";
-		}
-		else
-		{
-			filecategory = "file";
-		}
-
-		//GID and UID
-		grp = getgrgid(filestat.st_gid);
-		pwp = getpwuid(filestat.st_uid);
-
-		//directory, ignore . and ..
-		if(strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0)
-		{
-			continue;
-		}
-
-		//print directory, symlink, or file
-		if(S_ISDIR(filestat.st_mode))
-		{
-			printf("%*s%s/%*s", spaces, "", entry->d_name, 20 - spaces - (int)strlen(entry->d_name) + width, "");
-		}
-		else if(S_ISLNK(filestat.st_mode))
-		{
-			printf("%*s%s/%*s", spaces, "", entry->d_name, 20 - spaces - (int)strlen(entry->d_name) + width, "");
-		}
-		else
-		{
-			printf("%*s%s%*s", spaces, "", entry->d_name, 21 - spaces - (int)strlen(entry->d_name) + width, "");
-		}
-
-		//print attribute of the directory, symlink, or file
-		int i;
-		char date[20];
-
-		for(i = 0; i < strlen(options); i++)
-		{
-			switch(options[i])
-			{
-				case 'd':
-					printf("[%s]  ", formatdate(date, sizeof(date), filestat.st_mtime));
-					break;
-
-				case 'g':
-					if(grp != NULL)
-					{
-						printf("[%*.8s]  ", 8, grp->gr_name);
-					}
-					else
-					{
-						printf("[%*d]  ", 8, filestat.st_gid);
-					}
-					break;
-
-				case 'i':
-					printf("[%*d]  ", 3, (unsigned int)filestat.st_nlink);
-					break;
-
-				case 'p':
-					printf("[%s]  ", permission_bit);
-					break;
-
-				case 's':
-					printf("[%*lld%s]  ", 4, byte, sizesuffix);
-					break;
-
-				case 't':
-					printf("[%*s]  ", 9, filecategory);
-					break;
-
-				case 'u':
-					if(pwp != NULL)
-					{
-						printf("[%*.8s]  ", 8, pwp->pw_name);
-					}
-					else
-					{
-						printf("[%*d]  ", 8, filestat.st_uid);
-					}
-					break;
-
-				default:
-					return;
-                                }
-                        }
-                        printf("\n");
-
-
-		if(S_ISDIR(filestat.st_mode))
-		{
-
-			breadthfirst(entry->d_name, level + 1, width, indentation, symlink, options);
-		}
-		else if(S_ISLNK(filestat.st_mode))
-		{
-			//follow if symbolic link true
-			if(symlink)
-			{
-				//attributes of file 
-				stat(entry->d_name, &filestat);
-
-				breadthfirst(entry->d_name, level + 1, width, indentation, symlink, options);
-
-				chdir(cwd);
-			}
-		}
-	}
-
-	//change current working directory 
-	chdir("..");
-
-	//close directory
-	closedir(dp);
+    return (queue->size == 0);
 }
+
+/*adds item to back of queue*/
+void enqueue(struct Queue* queue, char* item)   
+{
+    if (isFull(queue))
+    {
+        return;
+    }
+    queue->rear = (queue->rear + 1)%queue->capacity;
+    queue->array[queue->rear] = item;
+    queue->size = queue->size + 1;
+}
+
+/*removes item from front of queue*/
+char* dequeue(struct Queue* queue)          
+{
+    if (isEmpty(queue))
+    {
+        return "";
+    }
+    queue->front = (queue->front + 1)%queue->capacity;
+    queue->size = queue->size - 1;
+    return "";
+}
+
+/*returns char array stored on front of array*/
+char* front(struct Queue* queue)            
+{
+    if (isEmpty(queue))
+    {
+        return "";
+    }
+    return queue->array[queue->front];
+}
+
+/*return output of unix system command*/
+char* getCmdOutput(const char *cmd)          
+{
+    FILE *fp = popen(cmd, "r");
+    static char output[40];
+    if (fp != NULL)
+    {
+        if (fgets(output, sizeof(output), fp))
+        {
+            /*strips newline off string*/
+            output[strcspn(output, "\n\r")] = 0;        
+        }
+        pclose(fp);
+    }
+    return output;
+}
+
+/*capture all files and dir paths - enter into the queue*/
+void breadthFirst(struct Queue *queue, char *path)     
+{
+    static char cmd[40];
+    strcpy(cmd,"ls -1");
+    strcat(cmd," ");
+    strcat(cmd,path);
+
+    FILE *fp = popen(cmd, "r");             
+    static char temp[100];
+
+    if (fp != NULL)
+    {
+        /*traverses output line by line - stores in tvariable "temp"*/
+        while (fgets(temp, sizeof(temp), fp))       
+        {
+            char *fileName = malloc(100);
+            temp[strcspn(temp, "\n\r")] = 0;
+
+            /*if path not empty, copy path into "fileName"*/
+            if(strcmp(path, "") != 0)          
+            {
+                strcpy(fileName,path);
+                strcat(fileName, "/");
+            }
+
+            /*append path to file/directory onto the cpd*/
+            strcat(fileName, temp);             
+            enqueue(queue, fileName);         
+        }
+        pclose(fp);
+    }
+}
+
+int isDirectory(char *path)        
+{
+    static char temp5[100];
+    strcpy(temp5, "stat --format=%A");
+    strcat(temp5, " ");
+    strcat(temp5, path);
+    strcat(temp5, " | awk '{print substr($0,1,1)}'");
+
+    /*checks if dir*/
+    if(strcmp("d", getCmdOutput(temp5))==0)         
+    {
+        return 1;
+    } else
+    {
+        return 0;
+    }
+}
+
+/*prints info for each path argument given*/
+void printInfo(char *path)      
+{
+    /*char arrays for storing each option*/
+    char type[20];                  
+    char perm[20];
+    char link[20];
+    char uid[20];
+    char gid[20];
+    char size[20];
+    char time[20];
+
+    if (hflag == 1)       
+    {
+        printf("%s\n", usage);
+        printf("Prints all file and directories in breadth order with selected options.\n\n");
+        printf("-h Print a help message and exit.\n");
+        printf("-L Follow symbolic links\n");
+        printf("-t Print information on ﬁle type\n");
+        printf("-p Print permission bits(r-read w-write x-execute)\n");
+        printf("-i Print the number of links to ﬁle in inode table\n");
+        printf("-u Print the UID associated with the ﬁle\n");
+        printf("-g Print the GID associated with the ﬁle\n");
+        printf("-s Print the size of ﬁle in bytes\n");
+        printf("-d Show the time of last modiﬁcation\n");
+        printf("-l Print information on the ﬁle as if all of the options are speciﬁed\n");
+
+        exit(0);
+    }
+
+
+    /*if (Lflag == 1)
+    {
+      fprintf(stderr, "Lflag!\n");
+      system("readlink -f bt.c");
+
+      NOT FUNCTIONAL
+    }*/
+    
+
+    /*File type*/
+    if (tflag == 1)                 
+    {
+        strcpy(command, "stat --format=%A");
+        strcat(command, " ");
+        strcat(command, path);
+        strcat(command, " | awk '{print substr($0,1,1)}'");
+        strcpy(type, getCmdOutput(command));
+
+        printf("%-1s", type);
+
+         /*adds space behind file type output if permissions DNE*/
+        if (pflag == 0)            
+        {
+            printf(" ");
+        }
+    }
+
+    /*permissions*/
+    if (pflag == 1)                 
+    {
+        strcpy(command, "stat --format=%A");
+        strcat(command, " ");
+        strcat(command, path);
+        strcat(command, " | awk '{print substr($0,2,10)}'");
+        strcpy(perm, getCmdOutput(command));
+
+        printf("%-9s ", perm);
+    }
+
+    /*inode links to file*/
+    if (iflag == 1)                 
+    {
+        strcpy(command, "stat --format=%h");
+        strcat(command, " ");
+        strcat(command, path);
+        strcpy(link, getCmdOutput(command));
+
+        printf("%-3s ", link);
+    }
+
+    /*user ID name*/
+    if (uflag == 1)                 
+    {
+        strcpy(command, "stat --format=%U");
+        strcat(command, " ");
+        strcat(command, path);
+        strcpy(uid, getCmdOutput(command));
+
+        printf("%-9s ", uid);
+    }
+
+    /*group ID name*/
+    if (gflag == 1)                 
+    {
+        strcpy(command, "stat --format=%G");
+        strcat(command, " ");
+        strcat(command, path);
+        strcpy(gid, getCmdOutput(command));
+
+        printf("%-9s ", gid);
+    }
+
+    /*file size*/
+    if (sflag == 1)                 
+    {
+        strcpy(command, "ls -ldh");
+        strcat(command, " ");
+        strcat(command, path);
+        strcat(command, " | awk '{ print $5}'");
+        strcpy(size, getCmdOutput(command));
+
+        printf("%-5s ", size);
+    }
+
+    /*last modification time*/
+    if (dflag == 1)                 
+    {
+        strcpy(command, "date +\"%b %d, %Y\" -r");
+        strcat(command, " ");
+        strcat(command, path);
+        strcpy(time, getCmdOutput(command));
+
+        printf("%-12s ", time);
+    }
+
+    /*prints path and name for current file/directory*/
+    printf("%-s\n", path);         
+}
+
+
+int main (int argc, char *argv[])
+{
+    int index;
+    strcpy(error,argv[0]);
+    strcat(error,": Error");
+
+    strcpy(usage,"Usage: ");
+    strcat(usage,argv[0]);
+    strcat(usage," [-h] [-L -d -g -i -p -s -t -u | -l] [dirname]");
+
+    while ((opt = getopt(argc, argv, "hLtpiugsdl")) != -1)		
+    {
+        switch (opt)
+        {
+            case 'h':
+                hflag = 1;
+                break;
+            case 'L':
+                Lflag = 1;
+                break;
+            case 't':
+                tflag = 1;
+                break;
+            case 'p':
+                pflag = 1;
+                break;
+            case 'i':
+                iflag = 1;
+                break;
+            case 'u':
+                uflag = 1;
+                break;
+            case 'g':
+                gflag = 1;
+                break;
+            case 's':
+                sflag = 1;
+                break;
+            case 'd':
+                dflag = 1;
+                break;
+            case 'l':
+                Lflag = dflag = gflag = iflag = pflag = sflag = tflag = uflag = 1;
+                break;
+            default:
+                fprintf(stderr, "%s\n", usage);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    /*checks for only 1 argument, if any, after options*/
+    if(argc-optind > 1)             
+    {
+        printf("%s: Too many arguments\n",error);
+        fprintf(stderr, "%s\n", usage);
+        exit(EXIT_FAILURE);
+    }
+
+    /*creates queue*/
+    struct Queue* queue = createQueue(1000);        
+    char path[200];
+    strcpy(path, "");
+    char *temp2 = malloc(strlen(path));
+
+    for (index = optind; index < argc; index++)
+    {
+        int result;
+
+        /*checks if valid file or directory*/
+        result = access(argv[index], F_OK);         
+
+        if ( result == 0 )
+        {
+            strcpy(path,argv[index]);
+        }
+        else
+        {
+            /*perror message if file/directory not valid*/
+            perror(error);                          
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    strcpy(temp2,path);
+    enqueue(queue, temp2);
+
+    while(queue->size > 0)
+    {
+        /*reading from queue and stores into "path"*/
+        strcpy(path,front(queue));                 
+
+        if(strcmp(path, "") != 0)                       
+        {
+            if(isDirectory(path) == 1)                  
+            {
+                /*call breadthfirst function*/
+                breadthFirst(queue, path);              
+            }
+        }else
+        {
+            /*call breadthfirst function if path is empty*/
+            breadthFirst(queue, path);                
+        }
+
+        if(strcmp(path, "") != 0)                       
+        {
+            printInfo(path);
+        }
+
+        /*call dequeue*/
+        dequeue(queue);                                 
+    }
+
+    free(queue->array);                         
+    free(queue);
+    free(temp2);
+
+    return 0;
+}
+
